@@ -104,9 +104,7 @@ class TEFASProvider(BaseProvider):
     BASE_URL = "https://www.tefas.gov.tr/api/DB"
 
     def __init__(self):
-        super().__init__()
-        # Disable SSL verification for TEFAS
-        self._client.verify = False
+        super().__init__(verify=False)
 
     def get_fund_detail(self, fund_code: str, fund_type: str = "YAT") -> dict[str, Any]:
         """
