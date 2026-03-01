@@ -631,6 +631,42 @@ print(result['summary'])            # Özet
 #   worst_return_1y: 28.15
 ```
 
+### Yönetim Ücretleri
+
+```python
+import borsapy as bp
+
+# Tüm yatırım fonu yönetim ücretleri
+df = bp.management_fees()
+print(df)
+#   fund_code                              name  applied_fee  prospectus_fee  max_expense_ratio  annual_return
+# 0       AAK  ATA PORTFÖY ÇOKLU VARLIK DEĞİ...          1.0             2.2               3.65           45.5
+
+# Emeklilik fonu ücretleri
+df_emk = bp.management_fees(fund_type="EMK")
+
+# Kurucu filtresi
+df_akp = bp.management_fees(founder="AKP")
+
+# Tek fon için
+fon = bp.Fund("AAK")
+print(fon.management_fee)
+# {'applied_fee': 1.0, 'prospectus_fee': 2.2, 'max_expense_ratio': 3.65, 'annual_return': 45.5}
+```
+
+**DataFrame Sütunları:**
+
+| Sütun | Açıklama |
+|-------|----------|
+| `fund_code` | TEFAS fon kodu |
+| `name` | Fon tam adı |
+| `fund_category` | Fon kategorisi |
+| `founder_code` | Kurucu şirket kodu |
+| `applied_fee` | Uygulanan yıllık yönetim ücreti (%) |
+| `prospectus_fee` | İzahname yönetim ücreti (%) |
+| `max_expense_ratio` | Azami toplam gider kesinti oranı (%) |
+| `annual_return` | Yıllık getiri (%) |
+
 ### Risk Metrikleri
 
 ```python
@@ -653,6 +689,45 @@ fon.history(period="3y")   # 3 yıllık veri
 fon.history(period="5y")   # 5 yıllık veri
 fon.history(period="max")  # Tüm veri (5 yıla kadar)
 ```
+
+### Stopaj Oranları (Withholding Tax)
+
+Gelir Vergisi Kanunu geçici 67. madde kapsamında fon stopaj oranlarını sorgulama.
+
+```python
+import borsapy as bp
+
+# Tek fon için stopaj oranı
+fon = bp.Fund("AAK")
+print(fon.tax_category)                           # "degisken_karma_doviz"
+print(fon.withholding_tax_rate("2025-06-01"))      # 0.15 (15%)
+print(fon.withholding_tax_rate("2025-08-01"))      # 0.175 (17.5%)
+
+# Pay senedi yoğun fon → her zaman %0
+hisse_fon = bp.Fund("TTE")
+print(hisse_fon.tax_category)                      # "pay_senedi_yogun"
+print(hisse_fon.withholding_tax_rate("2025-08-01")) # 0.0 (0%)
+
+# Standalone fonksiyon (fund kodu ile)
+print(bp.withholding_tax_rate("AAK", "2025-06-01"))  # 0.15
+
+# Referans tablo
+print(bp.withholding_tax_table())
+#   tax_category          description              <23.12.2020  ...  >=09.07.2025
+# 0  degisken_karma_doviz  Degisken, karma, ...         10.0  ...         17.5
+# 1  pay_senedi_yogun      Pay senedi yogun fon          0.0  ...          0.0
+# ...
+```
+
+**Vergi Kategorileri:**
+
+| Kategori | Açıklama | >=09.07.2025 |
+|----------|----------|:------------:|
+| `degisken_karma_doviz` | Değişken, karma, eurobond, dış borçlanma, yabancı, serbest + döviz | %17.5 |
+| `pay_senedi_yogun` | Pay senedi yoğun fon | %0 |
+| `borclanma_para_maden` | Borçlanma araçları, para piyasası, kıymetli maden, katılım | %17.5 |
+| `gsyf_gyf_uzun` | GSYF/GYF (>2 yıl) | %0 |
+| `gsyf_gyf_kisa` | GSYF/GYF (<2 yıl) | %17.5 |
 
 ---
 
@@ -803,10 +878,41 @@ portfolio.clear()
 portfolio.add("THYAO", shares=100, cost=280).add("GARAN", shares=200, cost=50).set_benchmark("XU030")
 ```
 
+### Portföy Dengeleme (Rebalancing)
+
+```python
+import borsapy as bp
+
+p = bp.Portfolio()
+p.add("THYAO", shares=100, cost=280)
+p.add("GARAN", shares=200, cost=50)
+p.add("gram-altin", shares=5, asset_type="fx")
+
+# Hedef ağırlıklar belirle (0-1 ölçeği, toplam ~1.0)
+p.set_target_weights({"THYAO": 0.50, "GARAN": 0.30, "gram-altin": 0.20})
+
+# Sapma analizi
+print(p.drift())
+#    symbol  current_weight  target_weight   drift  drift_pct
+# 0   GARAN          0.2500         0.3000 -0.0500      -5.00
+# 1   THYAO          0.7000         0.5000  0.2000      20.00
+# 2   gram-altin     0.0500         0.2000 -0.1500     -15.00
+
+# Dengeleme planı (eşik: %2 altındaki sapmalar yoksayılır)
+plan = p.rebalance_plan(threshold=0.02)
+print(plan)  # symbol, current_shares, target_shares, delta_shares, delta_value, action
+
+# Dengelemeyi uygula
+p.rebalance(threshold=0.02)
+
+# Dry run (sadece plan, uygulama yok)
+plan = p.rebalance(threshold=0.02, dry_run=True)
+```
+
 ### Import/Export
 
 ```python
-# Dict olarak export
+# Dict olarak export (target_weights dahil)
 data = portfolio.to_dict()
 print(data)
 # {'benchmark': 'XU100', 'holdings': [
@@ -964,7 +1070,9 @@ from borsapy.technical import (
     calculate_sma, calculate_ema, calculate_rsi, calculate_macd,
     calculate_bollinger_bands, calculate_atr, calculate_stochastic,
     calculate_obv, calculate_vwap, calculate_adx, calculate_supertrend,
-    calculate_tilson_t3, add_indicators
+    calculate_tilson_t3, calculate_hhv, calculate_llv, calculate_mom,
+    calculate_roc, calculate_wma, calculate_dema, calculate_tema,
+    add_indicators
 )
 
 # Herhangi bir DataFrame üzerinde kullanım
@@ -996,6 +1104,55 @@ df_with_indicators = add_indicators(df, indicators=["sma", "rsi"])  # Sadece bel
 | ADX | `adx()` | Ortalama Yön Endeksi (0-100) |
 | Supertrend | `supertrend()` | Trend takip göstergesi (ATR-tabanlı) |
 | Tilson T3 | `tilson_t3()` | Triple-smoothed EMA (düşük gecikme) |
+| HHV | `hhv()` | En Yüksek Değer (MetaStock) |
+| LLV | `llv()` | En Düşük Değer (MetaStock) |
+| MOM | `mom()` | Momentum (MetaStock) |
+| ROC | `roc()` | Değişim Oranı (MetaStock) |
+| WMA | `wma()` | Ağırlıklı Hareketli Ortalama (MetaStock) |
+| DEMA | `dema()` | Çift Üstel Hareketli Ortalama (MetaStock) |
+| TEMA | `tema()` | Üçlü Üstel Hareketli Ortalama (MetaStock) |
+
+### MetaStock Göstergeleri
+
+Klasik MetaStock teknik göstergeleri.
+
+```python
+import borsapy as bp
+
+stock = bp.Ticker("THYAO")
+
+# Mixin kısayolları (son değer)
+stock.hhv()    # 14-period en yüksek High
+stock.llv()    # 14-period en düşük Low
+stock.mom()    # 10-period momentum (Close - Close[N])
+stock.roc()    # 10-period değişim oranı (%)
+stock.wma()    # 20-period ağırlıklı ortalama
+stock.dema()   # 20-period çift EMA
+stock.tema()   # 20-period üçlü EMA
+
+# Pure fonksiyonlar
+df = stock.history(period="1y")
+hhv = bp.calculate_hhv(df, period=52, column="Close")   # 52-hafta yüksek
+llv = bp.calculate_llv(df, period=52, column="Low")
+mom = bp.calculate_mom(df, period=10)
+roc = bp.calculate_roc(df, period=10)
+wma = bp.calculate_wma(df, period=20)
+dema = bp.calculate_dema(df, period=20)
+tema = bp.calculate_tema(df, period=20)
+
+# add_indicators ile toplu ekleme
+df = bp.add_indicators(df, ["hhv", "llv", "mom", "roc", "wma", "dema", "tema"])
+```
+
+| Gösterge | Fonksiyon | Varsayılan | Formül |
+|----------|-----------|------------|--------|
+| HHV | `calculate_hhv(df, period, column)` | 14, High | Rolling max |
+| LLV | `calculate_llv(df, period, column)` | 14, Low | Rolling min |
+| MOM | `calculate_mom(df, period)` | 10 | Close - Close[N] |
+| ROC | `calculate_roc(df, period)` | 10 | ((C - C[N]) / C[N]) × 100 |
+| WMA | `calculate_wma(df, period)` | 20 | Lineer ağırlıklı ortalama |
+| DEMA | `calculate_dema(df, period)` | 20 | 2×EMA - EMA(EMA) |
+| TEMA | `calculate_tema(df, period)` | 20 | 3×EMA - 3×EMA(EMA) + EMA(EMA(EMA)) |
 
 ### Supertrend
 
@@ -2296,7 +2453,7 @@ print(sonuc)
 | Index | TradingView, BIST | BIST endeksleri, bileşen listeleri |
 | FX | canlidoviz.com, doviz.com, TradingView | 65 döviz, altın, emtia; banka/kurum kurları; intraday (TradingView) |
 | Crypto | BtcTurk | Kripto para verileri |
-| Fund | TEFAS | Yatırım fonu verileri, varlık dağılımı, tarama/karşılaştırma |
+| Fund | TEFAS | Yatırım fonu verileri, varlık dağılımı, tarama/karşılaştırma, stopaj oranları |
 | Inflation | TCMB | Enflasyon verileri |
 | VIOP | İş Yatırım, TradingView | Vadeli işlem/opsiyon; gerçek zamanlı streaming |
 | Bond | doviz.com | Devlet tahvili faiz oranları (2Y, 5Y, 10Y) |
@@ -2330,7 +2487,7 @@ print(sonuc)
 - **Portfolio**: Çoklu varlık portföy yönetimi + risk metrikleri (Sharpe, Sortino, Beta, Alpha)
 - **FX**: Döviz ve emtia verileri + banka kurları + intraday (TradingView)
 - **Crypto**: Kripto para (BtcTurk)
-- **Fund**: Yatırım fonları + varlık dağılımı + tarama/karşılaştırma (TEFAS)
+- **Fund**: Yatırım fonları + varlık dağılımı + tarama/karşılaştırma + stopaj oranları (TEFAS)
 - **Inflation**: Enflasyon verileri ve hesaplayıcı (TCMB)
 - **VIOP**: Vadeli işlem/opsiyon + gerçek zamanlı streaming + kontrat arama
 - **Bond**: Devlet tahvili faiz oranları + risk_free_rate (doviz.com)

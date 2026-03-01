@@ -10,13 +10,20 @@ from borsapy.technical import (
     calculate_adx,
     calculate_atr,
     calculate_bollinger_bands,
+    calculate_dema,
     calculate_ema,
+    calculate_hhv,
+    calculate_llv,
     calculate_macd,
+    calculate_mom,
     calculate_obv,
+    calculate_roc,
     calculate_rsi,
     calculate_sma,
     calculate_stochastic,
+    calculate_tema,
     calculate_vwap,
+    calculate_wma,
 )
 
 # =============================================================================
@@ -473,3 +480,292 @@ class TestIntegration:
         df = stock.history_with_indicators(period="1mo")
         assert "RSI_14" in df.columns
         assert "SMA_20" in df.columns
+
+
+# =============================================================================
+# MetaStock Indicator Tests
+# =============================================================================
+
+
+class TestHHV:
+    """Tests for Highest High Value (HHV)."""
+
+    def test_hhv_basic(self, ohlcv_df):
+        result = calculate_hhv(ohlcv_df, period=5, column="High")
+        assert len(result) == len(ohlcv_df)
+        # Last value should be max of last 5 highs
+        expected = ohlcv_df["High"].iloc[-5:].max()
+        assert abs(result.iloc[-1] - expected) < 0.01
+
+    def test_hhv_period_1(self, ohlcv_df):
+        result = calculate_hhv(ohlcv_df, period=1, column="High")
+        pd.testing.assert_series_equal(result, ohlcv_df["High"], check_names=False)
+
+    def test_hhv_close_column(self, simple_df):
+        result = calculate_hhv(simple_df, period=3, column="Close")
+        # Third value: max of [100, 102, 101] = 102
+        assert result.iloc[2] == 102
+
+    def test_hhv_missing_column(self, simple_df):
+        result = calculate_hhv(simple_df, period=5, column="High")
+        # simple_df has no "High" column, should return NaN series
+        assert result.isna().all()
+
+    def test_hhv_empty(self, empty_df):
+        result = calculate_hhv(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestLLV:
+    """Tests for Lowest Low Value (LLV)."""
+
+    def test_llv_basic(self, ohlcv_df):
+        result = calculate_llv(ohlcv_df, period=5, column="Low")
+        assert len(result) == len(ohlcv_df)
+        expected = ohlcv_df["Low"].iloc[-5:].min()
+        assert abs(result.iloc[-1] - expected) < 0.01
+
+    def test_llv_period_1(self, ohlcv_df):
+        result = calculate_llv(ohlcv_df, period=1, column="Low")
+        pd.testing.assert_series_equal(result, ohlcv_df["Low"], check_names=False)
+
+    def test_llv_close_column(self, simple_df):
+        result = calculate_llv(simple_df, period=3, column="Close")
+        # Third value: min of [100, 102, 101] = 100
+        assert result.iloc[2] == 100
+
+    def test_llv_missing_column(self, simple_df):
+        result = calculate_llv(simple_df, period=5, column="Low")
+        assert result.isna().all()
+
+    def test_llv_empty(self, empty_df):
+        result = calculate_llv(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestMOM:
+    """Tests for Momentum (MOM)."""
+
+    def test_mom_basic(self, simple_df):
+        result = calculate_mom(simple_df, period=1)
+        # MOM(1) = Close - Close[1 ago]
+        assert result.iloc[1] == 102 - 100  # 2
+        assert result.iloc[2] == 101 - 102  # -1
+
+    def test_mom_period_5(self, simple_df):
+        result = calculate_mom(simple_df, period=5)
+        # MOM(5) at index 5 = Close[5] - Close[0] = 102 - 100 = 2
+        assert result.iloc[5] == simple_df["Close"].iloc[5] - simple_df["Close"].iloc[0]
+
+    def test_mom_first_values_nan(self, simple_df):
+        result = calculate_mom(simple_df, period=3)
+        assert result.iloc[:3].isna().all()
+
+    def test_mom_empty(self, empty_df):
+        result = calculate_mom(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestROC:
+    """Tests for Rate of Change (ROC)."""
+
+    def test_roc_basic(self, simple_df):
+        result = calculate_roc(simple_df, period=1)
+        # ROC(1) at index 1 = ((102 - 100) / 100) * 100 = 2.0%
+        assert abs(result.iloc[1] - 2.0) < 0.01
+
+    def test_roc_period_5(self, simple_df):
+        result = calculate_roc(simple_df, period=5)
+        c5 = simple_df["Close"].iloc[5]
+        c0 = simple_df["Close"].iloc[0]
+        expected = ((c5 - c0) / c0) * 100
+        assert abs(result.iloc[5] - expected) < 0.01
+
+    def test_roc_first_values_nan(self, simple_df):
+        result = calculate_roc(simple_df, period=3)
+        assert result.iloc[:3].isna().all()
+
+    def test_roc_empty(self, empty_df):
+        result = calculate_roc(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestWMA:
+    """Tests for Weighted Moving Average (WMA)."""
+
+    def test_wma_basic(self, simple_df):
+        result = calculate_wma(simple_df, period=3)
+        # WMA(3) at index 2: weights [1,2,3], values [100,102,101]
+        # = (1*100 + 2*102 + 3*101) / 6 = (100+204+303)/6 = 607/6 = 101.167
+        expected = (1 * 100 + 2 * 102 + 3 * 101) / 6
+        assert abs(result.iloc[2] - expected) < 0.01
+
+    def test_wma_nan_before_period(self, simple_df):
+        result = calculate_wma(simple_df, period=5)
+        assert result.iloc[:4].isna().all()
+        assert not np.isnan(result.iloc[4])
+
+    def test_wma_length(self, ohlcv_df):
+        result = calculate_wma(ohlcv_df, period=10)
+        assert len(result) == len(ohlcv_df)
+
+    def test_wma_empty(self, empty_df):
+        result = calculate_wma(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestDEMA:
+    """Tests for Double Exponential Moving Average (DEMA)."""
+
+    def test_dema_basic(self, ohlcv_df):
+        result = calculate_dema(ohlcv_df, period=10)
+        assert len(result) == len(ohlcv_df)
+        assert not np.isnan(result.iloc[-1])
+
+    def test_dema_less_lag_than_ema(self, ohlcv_df):
+        """DEMA should react faster to price changes than EMA."""
+        ema = calculate_ema(ohlcv_df, period=20)
+        dema = calculate_dema(ohlcv_df, period=20)
+        # Both should have valid final values
+        assert not np.isnan(ema.iloc[-1])
+        assert not np.isnan(dema.iloc[-1])
+
+    def test_dema_formula(self, simple_df):
+        """Verify DEMA = 2*EMA - EMA(EMA)."""
+        period = 3
+        ema1 = simple_df["Close"].ewm(span=period, adjust=False).mean()
+        ema2 = ema1.ewm(span=period, adjust=False).mean()
+        expected = 2 * ema1 - ema2
+        result = calculate_dema(simple_df, period=period)
+        pd.testing.assert_series_equal(result, expected, check_names=False)
+
+    def test_dema_empty(self, empty_df):
+        result = calculate_dema(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestTEMA:
+    """Tests for Triple Exponential Moving Average (TEMA)."""
+
+    def test_tema_basic(self, ohlcv_df):
+        result = calculate_tema(ohlcv_df, period=10)
+        assert len(result) == len(ohlcv_df)
+        assert not np.isnan(result.iloc[-1])
+
+    def test_tema_formula(self, simple_df):
+        """Verify TEMA = 3*EMA - 3*EMA(EMA) + EMA(EMA(EMA))."""
+        period = 3
+        ema1 = simple_df["Close"].ewm(span=period, adjust=False).mean()
+        ema2 = ema1.ewm(span=period, adjust=False).mean()
+        ema3 = ema2.ewm(span=period, adjust=False).mean()
+        expected = 3 * ema1 - 3 * ema2 + ema3
+        result = calculate_tema(simple_df, period=period)
+        pd.testing.assert_series_equal(result, expected, check_names=False)
+
+    def test_tema_empty(self, empty_df):
+        result = calculate_tema(empty_df, period=5)
+        assert len(result) == 0
+
+
+class TestMetaStockAddIndicators:
+    """Tests for MetaStock indicators in add_indicators()."""
+
+    def test_add_hhv(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["hhv"])
+        assert "HHV_14" in result.columns
+
+    def test_add_llv(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["llv"])
+        assert "LLV_14" in result.columns
+
+    def test_add_mom(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["mom"])
+        assert "MOM_10" in result.columns
+
+    def test_add_roc(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["roc"])
+        assert "ROC_10" in result.columns
+
+    def test_add_wma(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["wma"])
+        assert "WMA_20" in result.columns
+
+    def test_add_dema(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["dema"])
+        assert "DEMA_20" in result.columns
+
+    def test_add_tema(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["tema"])
+        assert "TEMA_20" in result.columns
+
+    def test_add_all_metastock(self, ohlcv_df):
+        result = add_indicators(ohlcv_df, ["hhv", "llv", "mom", "roc", "wma", "dema", "tema"])
+        assert "HHV_14" in result.columns
+        assert "LLV_14" in result.columns
+        assert "MOM_10" in result.columns
+        assert "ROC_10" in result.columns
+        assert "WMA_20" in result.columns
+        assert "DEMA_20" in result.columns
+        assert "TEMA_20" in result.columns
+
+    def test_custom_periods(self, ohlcv_df):
+        result = add_indicators(
+            ohlcv_df,
+            ["hhv", "mom", "wma"],
+            hhv_period=20,
+            mom_period=5,
+            wma_period=10,
+        )
+        assert "HHV_20" in result.columns
+        assert "MOM_5" in result.columns
+        assert "WMA_10" in result.columns
+
+
+class TestMetaStockAnalyzer:
+    """Tests for MetaStock indicators in TechnicalAnalyzer."""
+
+    def test_analyzer_hhv(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.hhv(14)
+        assert len(result) == len(ohlcv_df)
+
+    def test_analyzer_llv(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.llv(14)
+        assert len(result) == len(ohlcv_df)
+
+    def test_analyzer_mom(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.mom(10)
+        assert len(result) == len(ohlcv_df)
+
+    def test_analyzer_roc(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.roc(10)
+        assert len(result) == len(ohlcv_df)
+
+    def test_analyzer_wma(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.wma(20)
+        assert len(result) == len(ohlcv_df)
+
+    def test_analyzer_dema(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.dema(20)
+        assert len(result) == len(ohlcv_df)
+
+    def test_analyzer_tema(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        result = ta.tema(20)
+        assert len(result) == len(ohlcv_df)
+
+    def test_latest_includes_metastock(self, ohlcv_df):
+        ta = TechnicalAnalyzer(ohlcv_df)
+        latest = ta.latest
+        assert "hhv_14" in latest
+        assert "llv_14" in latest
+        assert "mom_10" in latest
+        assert "roc_10" in latest
+        assert "wma_20" in latest
+        assert "dema_20" in latest
+        assert "tema_20" in latest

@@ -559,6 +559,147 @@ class TestRepr:
 
 
 # =============================================================================
+# Rebalancing Tests
+# =============================================================================
+
+
+@pytest.fixture
+def rebalance_portfolio():
+    """Portfolio with holdings and mock prices for rebalancing tests."""
+    p = Portfolio()
+    # Create holdings with known prices
+    p._holdings["THYAO"] = Holding("THYAO", 100, 300.0, "stock")
+    p._holdings["GARAN"] = Holding("GARAN", 200, 50.0, "stock")
+    # Total value = 100*300 + 200*50 = 30000 + 10000 = 40000
+    # Weights: THYAO=75%, GARAN=25%
+    return p
+
+
+class TestRebalancing:
+    """Tests for Portfolio rebalancing functionality."""
+
+    def test_set_target_weights(self, empty_portfolio):
+        """Test setting target weights."""
+        p = empty_portfolio
+        p.set_target_weights({"THYAO": 0.60, "GARAN": 0.40})
+        assert p.target_weights == {"THYAO": 0.60, "GARAN": 0.40}
+
+    def test_set_target_weights_chaining(self, empty_portfolio):
+        """Test method chaining."""
+        result = empty_portfolio.set_target_weights({"A": 0.5, "B": 0.5})
+        assert result is empty_portfolio
+
+    def test_set_target_weights_validation_sum(self, empty_portfolio):
+        """Test that weights must sum to ~1.0."""
+        with pytest.raises(ValueError, match="must sum to"):
+            empty_portfolio.set_target_weights({"A": 0.3, "B": 0.3})
+
+    def test_set_target_weights_validation_range(self, empty_portfolio):
+        """Test that weights must be 0-1."""
+        with pytest.raises(ValueError, match="must be between"):
+            empty_portfolio.set_target_weights({"A": 1.5, "B": -0.5})
+
+    def test_set_target_weights_tolerance(self, empty_portfolio):
+        """Test that small rounding errors are tolerated."""
+        # Sum = 1.001 should be ok (within 0.01 tolerance)
+        empty_portfolio.set_target_weights({"A": 0.501, "B": 0.50})
+        assert len(empty_portfolio.target_weights) == 2
+
+    def test_target_weights_property(self, empty_portfolio):
+        """Test target_weights returns a copy."""
+        empty_portfolio.set_target_weights({"A": 0.5, "B": 0.5})
+        weights = empty_portfolio.target_weights
+        weights["C"] = 0.1  # Modify the copy
+        assert "C" not in empty_portfolio.target_weights
+
+    def test_drift_no_targets(self, sample_portfolio):
+        """Test drift raises error without targets."""
+        with pytest.raises(ValueError, match="Target weights not set"):
+            sample_portfolio.drift()
+
+    def test_drift_basic(self, sample_portfolio):
+        """Test basic drift calculation."""
+        # Mock prices: use cost as current price
+        sample_portfolio.set_target_weights({"THYAO": 0.50, "GARAN": 0.50})
+        drift_df = sample_portfolio.drift()
+
+        assert "symbol" in drift_df.columns
+        assert "current_weight" in drift_df.columns
+        assert "target_weight" in drift_df.columns
+        assert "drift" in drift_df.columns
+        assert "drift_pct" in drift_df.columns
+        assert len(drift_df) == 2
+
+    def test_rebalance_plan_no_targets(self, sample_portfolio):
+        """Test rebalance_plan raises error without targets."""
+        with pytest.raises(ValueError, match="Target weights not set"):
+            sample_portfolio.rebalance_plan()
+
+    def test_rebalance_plan_columns(self, sample_portfolio):
+        """Test rebalance_plan returns correct columns."""
+        sample_portfolio.set_target_weights({"THYAO": 0.50, "GARAN": 0.50})
+        plan = sample_portfolio.rebalance_plan()
+
+        assert "symbol" in plan.columns
+        assert "current_shares" in plan.columns
+        assert "target_shares" in plan.columns
+        assert "delta_shares" in plan.columns
+        assert "delta_value" in plan.columns
+        assert "action" in plan.columns
+
+    def test_rebalance_plan_threshold(self, sample_portfolio):
+        """Test threshold filters small drifts."""
+        sample_portfolio.set_target_weights({"THYAO": 0.50, "GARAN": 0.50})
+        plan = sample_portfolio.rebalance_plan(threshold=0.99)
+        # With very high threshold, everything should be HOLD
+        for _, row in plan.iterrows():
+            assert row["action"] == "HOLD"
+
+    def test_rebalance_dry_run(self, sample_portfolio):
+        """Test dry_run doesn't modify holdings."""
+        original_shares = {s: h.shares for s, h in sample_portfolio._holdings.items()}
+        sample_portfolio.set_target_weights({"THYAO": 0.50, "GARAN": 0.50})
+        plan = sample_portfolio.rebalance(dry_run=True)
+        assert not plan.empty
+        # Holdings should not change
+        for symbol, holding in sample_portfolio._holdings.items():
+            assert holding.shares == original_shares[symbol]
+
+    def test_rebalance_executes(self, sample_portfolio):
+        """Test rebalance updates holdings."""
+        sample_portfolio.set_target_weights({"THYAO": 0.50, "GARAN": 0.50})
+        plan = sample_portfolio.rebalance()
+        assert not plan.empty
+        # After rebalance, shares should have changed
+        # (unless they were already at target)
+
+    def test_to_dict_includes_targets(self, sample_portfolio):
+        """Test to_dict includes target_weights."""
+        sample_portfolio.set_target_weights({"THYAO": 0.60, "GARAN": 0.40})
+        data = sample_portfolio.to_dict()
+        assert "target_weights" in data
+        assert data["target_weights"] == {"THYAO": 0.60, "GARAN": 0.40}
+
+    def test_to_dict_no_targets(self, sample_portfolio):
+        """Test to_dict without targets doesn't include key."""
+        data = sample_portfolio.to_dict()
+        assert "target_weights" not in data
+
+    def test_from_dict_restores_targets(self, sample_portfolio):
+        """Test from_dict restores target weights."""
+        sample_portfolio.set_target_weights({"THYAO": 0.60, "GARAN": 0.40})
+        data = sample_portfolio.to_dict()
+        restored = Portfolio.from_dict(data)
+        assert restored._target_weights == {"THYAO": 0.60, "GARAN": 0.40}
+
+    def test_from_dict_no_targets(self, sample_portfolio):
+        """Test from_dict without targets."""
+        data = sample_portfolio.to_dict()
+        restored = Portfolio.from_dict(data)
+        assert restored._target_weights == {}
+
+
+# =============================================================================
 # Integration Tests (require network)
 # =============================================================================
 
