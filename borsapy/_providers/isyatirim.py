@@ -554,7 +554,7 @@ class IsYatirimProvider(BaseProvider):
         }
 
     # Maximum periods per API call (İş Yatırım limit)
-    _MAX_PERIODS_PER_CALL = 5
+    _MAX_PERIODS_PER_CALL = 4
 
     def get_financial_statements(
         self,
@@ -748,7 +748,7 @@ class IsYatirimProvider(BaseProvider):
             "financialGroup": financial_group,
         }
 
-        for i, (year, period) in enumerate(periods[:5], 1):
+        for i, (year, period) in enumerate(periods[:self._MAX_PERIODS_PER_CALL], 1):
             params[f"year{i}"] = year
             params[f"period{i}"] = period
 
@@ -803,7 +803,7 @@ class IsYatirimProvider(BaseProvider):
             row_name = item.get("itemDescTr", item.get("itemDescEng", "Unknown"))
             row_data = {"Item": row_name}
 
-            for i, (year, period) in enumerate(periods[:5], 1):
+            for i, (year, period) in enumerate(periods[:self._MAX_PERIODS_PER_CALL], 1):
                 if quarterly:
                     col_name = f"{year}Q{period // 3}"
                 else:

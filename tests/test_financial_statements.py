@@ -263,33 +263,44 @@ class TestBatching:
 
     @patch.object(IsYatirimProvider, "_cache_get", return_value=None)
     @patch.object(IsYatirimProvider, "_cache_set")
-    def test_single_batch_for_5_periods(self, mock_cache_set, mock_cache_get):
-        """last_n=5 should result in 1 API call (1 batch of 5)."""
+    def test_single_batch_for_4_periods(self, mock_cache_set, mock_cache_get):
+        """last_n=4 should result in 1 API call (1 batch of 4)."""
         fetch_mock, call_count = self._mock_fetch()
         with patch.object(self.provider, "_fetch_financial_table", side_effect=fetch_mock):
             result = self.provider.get_financial_statements(
-                "THYAO", "income_stmt", quarterly=False, last_n=5
+                "THYAO", "income_stmt", quarterly=False, last_n=4
             )
-        # income_stmt has 1 table → 1 batch → 1 call
         assert call_count["n"] == 1
         assert not result.empty
 
     @patch.object(IsYatirimProvider, "_cache_get", return_value=None)
     @patch.object(IsYatirimProvider, "_cache_set")
-    def test_two_batches_for_10_periods(self, mock_cache_set, mock_cache_get):
-        """last_n=10 should result in 2 API calls (2 batches of 5)."""
+    def test_two_batches_for_5_periods(self, mock_cache_set, mock_cache_get):
+        """last_n=5 should result in 2 API calls (batch of 4 + batch of 1)."""
+        fetch_mock, call_count = self._mock_fetch()
+        with patch.object(self.provider, "_fetch_financial_table", side_effect=fetch_mock):
+            result = self.provider.get_financial_statements(
+                "THYAO", "income_stmt", quarterly=False, last_n=5
+            )
+        assert call_count["n"] == 2
+        assert not result.empty
+
+    @patch.object(IsYatirimProvider, "_cache_get", return_value=None)
+    @patch.object(IsYatirimProvider, "_cache_set")
+    def test_three_batches_for_10_periods(self, mock_cache_set, mock_cache_get):
+        """last_n=10 should result in 3 API calls (4+4+2)."""
         fetch_mock, call_count = self._mock_fetch()
         with patch.object(self.provider, "_fetch_financial_table", side_effect=fetch_mock):
             result = self.provider.get_financial_statements(
                 "THYAO", "income_stmt", quarterly=False, last_n=10
             )
-        assert call_count["n"] == 2
+        assert call_count["n"] == 3
         assert len(result.columns) == 10
 
     @patch.object(IsYatirimProvider, "_cache_get", return_value=None)
     @patch.object(IsYatirimProvider, "_cache_set")
     def test_three_batches_for_12_periods(self, mock_cache_set, mock_cache_get):
-        """last_n=12 needs 3 batches (5+5+2)."""
+        """last_n=12 needs 3 batches (4+4+4)."""
         fetch_mock, call_count = self._mock_fetch()
         with patch.object(self.provider, "_fetch_financial_table", side_effect=fetch_mock):
             self.provider.get_financial_statements(
@@ -300,7 +311,7 @@ class TestBatching:
     @patch.object(IsYatirimProvider, "_cache_get", return_value=None)
     @patch.object(IsYatirimProvider, "_cache_set")
     def test_balance_sheet_batches(self, mock_cache_set, mock_cache_get):
-        """balance_sheet with last_n=6 needs 2 batches (5+1). No per-table loop."""
+        """balance_sheet with last_n=6 needs 2 batches (4+2). No per-table loop."""
         fetch_mock, call_count = self._mock_fetch()
         with patch.object(self.provider, "_fetch_financial_table", side_effect=fetch_mock):
             self.provider.get_financial_statements(
@@ -468,17 +479,17 @@ class TestMergeDedup:
         def mock_fetch(symbol, financial_group, periods, quarterly=False, statement_type=None):
             call_idx["n"] += 1
             if call_idx["n"] == 1:
-                # Batch 1 returns 5 columns
-                data = {"2025": [100], "2024": [200], "2023": [300], "2022": [400], "2021": [500]}
+                # Batch 1 returns 4 columns
+                data = {"2025": [100], "2024": [200], "2023": [300], "2022": [400]}
             else:
-                # Batch 2 has an overlap column "2021" (happens if API returns it)
-                data = {"2021": [500], "2020": [600]}
+                # Batch 2 has an overlap column "2022" (happens if API returns it)
+                data = {"2022": [400], "2021": [500], "2020": [600]}
             return pd.DataFrame(data, index=pd.Index(["Revenue"], name="Item"))
 
         with patch.object(self.provider, "_fetch_financial_table", side_effect=mock_fetch):
             result = self.provider.get_financial_statements("THYAO", "income_stmt", last_n=7)
 
-        # Should have exactly 6 unique columns, not 7 (2021 deduped)
+        # Should have exactly 6 unique columns, not 7 (2022 deduped)
         assert len(result.columns) == 6
         assert "2021" in result.columns
         assert "2020" in result.columns
@@ -515,14 +526,15 @@ class TestEdgeCases:
         assert "2025" in result.columns
 
     def test_last_n_equal_to_batch_size(self):
-        """last_n=5 should produce exactly 1 batch."""
-        count = IsYatirimProvider._resolve_last_n(5, quarterly=False)
+        """last_n=4 should produce exactly 1 batch."""
+        count = IsYatirimProvider._resolve_last_n(4, quarterly=False)
         periods = self.provider._get_periods(2026, quarterly=False, count=count)
+        batch_size = IsYatirimProvider._MAX_PERIODS_PER_CALL
         batches = [
-            periods[i : i + 5] for i in range(0, len(periods), 5)
+            periods[i : i + batch_size] for i in range(0, len(periods), batch_size)
         ]
         assert len(batches) == 1
-        assert len(batches[0]) == 5
+        assert len(batches[0]) == 4
 
 
 # =============================================================================
